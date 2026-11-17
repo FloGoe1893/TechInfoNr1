@@ -33,7 +33,7 @@ logging.basicConfig(
         logging.StreamHandler(),  # Console logs
     ],
 )
-
+# astream
 logger = logging.getLogger(__name__)
 
 class CustomChatBot:
@@ -75,10 +75,13 @@ class CustomChatBot:
             self._index_data_to_vector_db()
 
         # Task: Initialize the document retriever
-        self.retriever = self.vector_db.as_retriever()
+        self.retriever = self.vector_db.as_retriever(
+            search_type="similarity_score_threshold",
+            search_kwargs={"score_threshold": 0.35, "k": 4}
+        )
 
         # Task: Initialize the large language model (LLM) from Ollama
-        self.llm = ChatOllama(model = MODEL_NAME, base_url=f"http://{OLLAMA_HOST_NAME}:11434")
+        self.llm = ChatOllama(model = MODEL_NAME, base_url=f"http://{OLLAMA_HOST_NAME}:11434", temperature=0)
 
         # Set up the retrieval-augmented generation (RAG) pipeline
         self.qa_rag_chain = self._initialize_qa_rag_chain()
@@ -176,7 +179,7 @@ class CustomChatBot:
 
         # Task: Define prompt
         prompt_template = """
-        You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. If you don't know the answer, just say that you don't know. Unless specified otherwise, use three sentences maximum and keep the answer concise.
+        You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. If the context is empty, answer exactly: I can't answer this question based on the book. Unless specified otherwise, use three sentences maximum and keep the answer concise.
 
         <context>
         {context}
@@ -223,11 +226,17 @@ class CustomChatBot:
         """
         logger.info("Streaming RAG chain response.")
         try:
+            docs = await self.retriever.ainvoke(question)
+            if not docs:
+                logger.info("No relevant documents found, skipping LLM.")
+                yield "I can't answer this question based on the book."
+                return
+            
             async for event in self.qa_rag_chain.astream_events(question, version="v2"):
                 # Task: Filter stream events to get the text chunk and yield it
                 # Hint: filter for event["event"] == "on_chat_model_stream"
                 if event["event"] == "on_chat_model_stream":
-                    chunk = event["data"]["chunk"].content
+                    chunk = event["data"]["chunk"].content #type: ignore
                     yield chunk
         except Exception as e:
             logger.error(f"Error in stream_answer: {e}", exc_info=True)

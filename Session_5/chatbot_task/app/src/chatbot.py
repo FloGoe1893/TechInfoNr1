@@ -225,12 +225,21 @@ class CustomChatBot:
             str: The generated answer from the model, streamed chunk by chunk.
         """
         logger.info("Streaming RAG chain response.")
+        
+        # Schauen, ob der retriever relevante Informationen findet:
         try:
             docs = await self.retriever.ainvoke(question)
             if not docs:
                 logger.info("No relevant documents found, skipping LLM.")
                 yield "I can't answer this question based on the book."
                 return
+
+            # Buchseiten von den chunks sammeln:
+            pages = []
+            for doc in docs:
+                label = doc.metadata.get("page_label")
+                if label and label not in pages:
+                    pages.append(label)
             
             async for event in self.qa_rag_chain.astream_events(question, version="v2"):
                 # Task: Filter stream events to get the text chunk and yield it
@@ -238,6 +247,10 @@ class CustomChatBot:
                 if event["event"] == "on_chat_model_stream":
                     chunk = event["data"]["chunk"].content #type: ignore
                     yield chunk
+
+            # Seitenzahlen unter der Antwort anhängen
+            if pages: 
+                yield f"\n\n---\n📄 **Sources:** book pages {', '.join(pages)}"
         except Exception as e:
             logger.error(f"Error in stream_answer: {e}", exc_info=True)
             raise
